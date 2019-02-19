@@ -1,11 +1,15 @@
 import numpy as np
+import warnings
 
 from .activations import sigmoid, sigmoid_backward
 from .activations import relu, relu_backward
 
 from .utils import get_cost_value
 
+import pdb
+
 class Model():
+
     def __init__(self, architecture):
         if len(architecture) < 1 and architecture[0]['type'] != 'input':
             raise Exception("Model architecture must be deeper than one layer and first layer type must be input")
@@ -13,8 +17,19 @@ class Model():
         # let's initialize layers at first...
         self.init_layers()
         # Workshop #7: implement momentum
-        # self.reset_momentum()
+        self.reset_momentum()
+        # Workshop #8: implement rmsprop
+        self.reset_rmsprop()
+        # Workshop #10: dropout
+        self.train()
 
+    def train(self):
+        # Workshop #10: dropout
+        self.training_mode = True
+
+    def eval(self):
+        # Workshop #10: dropout
+        self.training_mode = False
 
     def init_layers(self, seed=42):
         # random seed initiation
@@ -66,10 +81,23 @@ class Model():
             # extraction of b for the current layer
             b_curr = self.params_values["b" + str(layer_idx)]
 
-            # Workshop #1: implement back-propagation
+            # Workshop #1: implement forward-pass
             # just apply the formulas with the parameters W_curr and b_curr
             # you need to store a variable called Z_curr for posterity (will be clearer later)
             # and A_curr which is needed in the next iteration of the loop and as a return value
+            Z_curr = np.dot(W_curr, A_prev) + b_curr
+            if self.architecture[layer_idx]["type"] == "sigmoid":
+                activation = sigmoid(Z_curr)
+            else:
+                activation = relu(Z_curr)
+            A_curr = activation
+
+            # Workshop #10: dropout
+            if self.training_mode and "dropout" in self.architecture[layer_idx]:
+                keep_prob = 1 - self.architecture[layer_idx]["dropout"]
+                u1 = np.random.binomial(1, p = keep_prob, size = A_curr.shape) / keep_prob
+                A_curr *= u1
+                self.memory["dropout" + str(layer_idx)] = u1
 
             # saving calculated values in the memory
             self.memory["A" + str(layer_idx-1)] = A_prev
@@ -97,11 +125,21 @@ class Model():
         # initiation of gradient descent algorithm
         # hardcoded derivative of log_loss wrt Y_hat
         # which is the input of backpropagation algorithm
-        dA_prev = - (np.divide(Y, self.Y_hat) - np.divide(1 - Y, 1 - self.Y_hat));
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            dA_prev = - (np.divide(Y, self.Y_hat) - np.divide(1 - Y, 1 - self.Y_hat))
+            dA_prev[self.Y_hat == 0] = 1 #dA_prev[(Y == 0 and self.Y_hat == 0)] = 1
+            dA_prev[self.Y_hat == 1] = -1 #dA_prev[(Y == 1 and self.Y_hat == 1)] = -1
 
         # back-propagation algorithm requires that we iterate over layer backwards...
         for layer_idx in range(len(self.architecture)-1, 0, -1):
             dA_curr = dA_prev
+
+            # Workshop #10: dropout
+            if self.training_mode and "dropout" in self.architecture[layer_idx]:
+                u1 = self.memory["dropout" + str(layer_idx)]
+                dA_curr *= u1
 
             # let's grab value of activations and Z of the previous layer
             # that we stored while the forward step...
@@ -123,7 +161,14 @@ class Model():
             # the dimensions of numpy array
             # call dA[l-1] as dA_prev, the assignment at the beginning of the loop
             # will do the rest
-            raise Exception("Not implemented")
+            if self.architecture[layer_idx]["type"] == "sigmoid":
+                activation_backward = sigmoid_backward(dA_curr, Z_curr)
+            else:
+                activation_backward = relu_backward(dA_curr, Z_curr)
+            dZ_curr = activation_backward # dA_curr already multiplied in function
+            dW_curr = np.dot(dZ_curr, A_prev.T) / m
+            db_curr = np.sum(dZ_curr, axis = 1, keepdims = True) / m
+            dA_prev = np.dot(W_curr.T, dZ_curr)
 
             self.grads_values["dW" + str(layer_idx)] = dW_curr
             self.grads_values["db" + str(layer_idx)] = db_curr
@@ -131,18 +176,78 @@ class Model():
     def optimization_step(self, learning_rate):
         # Workshop #2: implement vanilla gradient descent step
         # Hint: you need grads_values and params_values...
-        raise Exception("Not implemented")
         for layer_idx in range(1, len(self.architecture)):
-            pass
+            self.params_values["W" + str(layer_idx)] -= learning_rate * self.grads_values["dW" + str(layer_idx)]
+            self.params_values["b" + str(layer_idx)] -= learning_rate * self.grads_values["db" + str(layer_idx)]
 
     def reset_momentum(self):
         # Workshop #7: implement momentum
-        raise Exception("Not implemented")
+        self.momentum = {}
+        for layer_idx in range(1, len(self.architecture)):
+            layer_input_size = self.architecture[layer_idx-1]["dimension"]
+            layer_output_size = self.architecture[layer_idx]["dimension"]
+            # momentum
+            self.momentum['dW' + str(layer_idx)] = np.zeros((layer_output_size, layer_input_size))
+            self.momentum['db' + str(layer_idx)] = np.zeros((layer_output_size, 1))
 
-    def optimization_step_momentum(self, learning_rate, decay_rate=0.9):
+    def reset_rmsprop(self):
+        # Workshop #8: implement rmsprop
+        self.rmsprop = {}
+        for layer_idx in range(1, len(self.architecture)):
+            layer_input_size = self.architecture[layer_idx - 1]["dimension"]
+            layer_output_size = self.architecture[layer_idx]["dimension"]
+            # rmsprop
+            self.rmsprop['dW' + str(layer_idx)] = np.zeros((layer_output_size, layer_input_size))
+            self.rmsprop['db' + str(layer_idx)] = np.zeros((layer_output_size, 1))
+
+    def optimization_step_momentum(self, learning_rate, running_counter, decay_rate=0.9):
         # Workshop #7: implement momentum
-        raise Exception("Not implemented")
+        for layer_idx in range(1, len(self.architecture)):
+            self.momentum["dW" + str(layer_idx)] = (decay_rate * self.momentum["dW" + str(layer_idx)]) + \
+                                                   ((1 - decay_rate) * self.grads_values["dW" + str(layer_idx)])
+            self.momentum["db" + str(layer_idx)] = (decay_rate * self.momentum["db" + str(layer_idx)]) + \
+                                                   ((1 - decay_rate) * self.grads_values["db" + str(layer_idx)])
+            self.params_values["W" + str(layer_idx)] -= learning_rate * (self.momentum["dW" + str(layer_idx)] /
+                                                                         (1 - np.power(decay_rate, running_counter))) # with bias-correction
+            self.params_values["b" + str(layer_idx)] -= learning_rate * (self.momentum["db" + str(layer_idx)] /
+                                                                         (1 - np.power(decay_rate, running_counter))) # with bias-correction
+    def optimization_step_rmsprop(self, learning_rate, decay_rate=0.1):
+        # Workshop #8: implement rmsprop
+        beta = 1 - decay_rate
 
-    def fit(self, X, Y, no_epochs, learning_rate, mini_batch_size=32, print_every=100):
+        for layer_idx in range(1, len(self.architecture)):
+            self.rmsprop["dW" + str(layer_idx)] = (beta * self.rmsprop["dW" + str(layer_idx)]) + ((1 - beta) * np.multiply(self.grads_values["dW" + str(layer_idx)], self.grads_values["dW" + str(layer_idx)]))
+            self.rmsprop["db" + str(layer_idx)] = (beta * self.rmsprop["db" + str(layer_idx)]) + ((1 - beta) * np.multiply(self.grads_values["db" + str(layer_idx)], self.grads_values["db" + str(layer_idx)]))
+            self.params_values["W" + str(layer_idx)] -= learning_rate * np.divide(self.grads_values["dW" + str(layer_idx)],
+                                                                                  np.sqrt(self.rmsprop["dW" + str(layer_idx)]
+                                                                                          + np.finfo(np.float32).eps))
+            self.params_values["b" + str(layer_idx)] -= learning_rate * np.divide(self.grads_values["db" + str(layer_idx)],
+                                                                                  np.sqrt(self.rmsprop["db" + str(layer_idx)]
+                                                                                          + np.finfo(np.float32).eps))
+
+    def fit(self, X, Y, no_epochs, learning_rate, mini_batch_size=32, print_every=100, momentum_decay_rate = 0.0, rmsprop = False):
         # WORKSHOP #6
-        raise Exception("Not implemented")
+        running_counter = 0
+        running_cost = 0
+        num_samples = X.shape[1]
+        num_mini_batches = num_samples // mini_batch_size
+        for epoch_no in range(no_epochs):
+            p = np.random.permutation(num_samples)
+            X, Y = X[:, p], Y[p]
+            for i in range(num_mini_batches + 1):
+                running_counter += 1
+                mini_batch_X = X[:, (i * mini_batch_size):min(i * mini_batch_size + mini_batch_size, num_samples)]
+                mini_batch_Y = Y[(i * mini_batch_size):min(i * mini_batch_size + mini_batch_size, num_samples)]
+                Y_hat = self.forward(mini_batch_X)
+                self.back_propagation(mini_batch_Y)
+                if rmsprop:
+                    self.optimization_step_rmsprop(learning_rate, momentum_decay_rate)
+                elif momentum_decay_rate < np.finfo(np.float32).eps:
+                    self.optimization_step(learning_rate)
+                else:
+                    self.optimization_step_momentum(learning_rate, running_counter, momentum_decay_rate)
+                running_cost += get_cost_value(Y_hat, mini_batch_Y)
+            epoch_no_print = epoch_no + 1
+            if epoch_no_print % print_every == 0:
+                print(f"Epoch {epoch_no_print} - cost {running_cost / running_counter}")
+                running_cost = 0

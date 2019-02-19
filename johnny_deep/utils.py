@@ -1,10 +1,14 @@
 import numpy as np
+import warnings
 
 def get_cost_value(Y_hat, Y):
     # number of examples
     m = Y_hat.shape[1]
     # calculation of the cost according to the formula
-    cost = -1 / m * (np.dot(Y, np.log(Y_hat).T) + np.dot(1 - Y, np.log(1 - Y_hat).T))
+    #cost = -1 / m * (np.dot(Y, np.log(Y_hat).T) + np.dot(1 - Y, np.log(1 - Y_hat).T))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cost = - 1 / m * np.nansum(Y * np.log(Y_hat) + (1 - Y) * np.log(1-Y_hat))
     return np.squeeze(cost)
 
 

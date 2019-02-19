@@ -11,10 +11,8 @@ def sigmoid_backward(dA, Z):
 
 
 def relu(Z):
-    # WORKSHOP #5: code the ReLU activation function
-    raise Exception("Not implemented")
+    return Z * (Z > 0)
 
 
 def relu_backward(dA, Z):
-    # WORKSHOP #5: code the ReLU activation function
-    raise Exception("Not implemented")
+    return dA * (Z > 0)
